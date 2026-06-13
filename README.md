@@ -13,15 +13,15 @@ sensitivities given inputs. It does not predict prices.
 
 ## Modules
 
-| # | Module        | Directory                  | Owner  |
-|---|---------------|----------------------------|--------|
-| 1 | Pricing core  | `pricing/` + `greeks/`     | Parrva |
-| 2 | Implied vol   | `iv/`                      | Parrva |
-| 3 | Instruments   | `instruments/`             | Arnav  |
-| 4 | Monte Carlo   | `montecarlo/`              | Parrva |
-| 5 | Risk          | `risk/`                    | Arnav  |
-| 6 | Stats         | `stats/`                   | Arnav  |
-| 7 | Python bindings | _(deferred to final phase)_ |      |
+| # | Module        | Directory                  | 
+|---|---------------|----------------------------|
+| 1 | Pricing core  | `pricing/` + `greeks/`     |
+| 2 | Implied vol   | `iv/`                      | 
+| 3 | Instruments   | `instruments/`             | 
+| 4 | Monte Carlo   | `montecarlo/`              |
+| 5 | Risk          | `risk/`                    |
+| 6 | Stats         | `stats/`                   | 
+| 7 | Python bindings | _(deferred to final phase)_ |      
 
 The shared numerical primitive (cumulative normal, etc.) lives in `math/`, which
 every module may depend on and which depends on nothing else.
