@@ -1,0 +1,28 @@
+{
+  "bond_summary": {
+    "face_value": 1000,
+    "coupon_rate": 0.06,
+    "current_yield": 0.07,
+    "current_price": 729.788
+  },
+  "scenarios": {
+    "Base_Case": {
+      "scenario_yield": 0.05,
+      "bond_price": 805.183,
+      "pnl": 75.3954,
+      "pnl_percentage": 10.3311
+    },
+    "Bear_Market": {
+      "scenario_yield": 0.07,
+      "bond_price": 729.788,
+      "pnl": 0,
+      "pnl_percentage": 0
+    },
+    "Bull_Market": {
+      "scenario_yield": 0.03,
+      "bond_price": 888.453,
+      "pnl": 158.665,
+      "pnl_percentage": 21.7413
+    }
+  }
+}

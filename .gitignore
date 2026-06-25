@@ -29,3 +29,18 @@ tests/validation/*.csv
 *.swp
 .DS_Store
 compile_commands.json
+
+# Nested build and generated artifacts (module-specific)
+**/build/
+**/CMakeFiles/
+*.exe
+*.out
+*.bin
+
+# Reference Quantlib Module-3 specific ignores
+/reference/Quantlib/Module-3/build/
+/reference/Quantlib/Module-3/data/
+
+# Logs and caches
+.cache/
+*.log
