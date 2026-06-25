@@ -31,7 +31,7 @@ def calculate_greeks(row):
 
 def process_benchmark_file(input_path, output_path):
     if not os.path.exists(input_path):
-        print(f"Skipping: {input_path} not found.")
+        print(f"Skipping: {input_path} not found. Check your paths!")
         return
 
     print(f"Processing {input_path}...")
@@ -47,5 +47,11 @@ def process_benchmark_file(input_path, output_path):
     print(f"Success. Processed {initial_rows - failed_calcs} valid contracts. Dropped {failed_calcs} due to math bounds.\n")
 
 if __name__ == "__main__":
-    process_benchmark_file('data/options_tcs.csv', 'data/pyvollib_results_tcs.csv')
-    process_benchmark_file('data/options_icicibank.csv', 'data/pyvollib_results_icicibank.csv')
+    tcs_input = 'reference/Pyvollib/Module-2/Data/options_tcs.csv'
+    tcs_output = 'reference/Pyvollib/Module-2/Data/pyvollib_results_tcs.csv'
+    process_benchmark_file(tcs_input, tcs_output)
+    
+    icici_input = 'reference/Pyvollib/Module-2/Data/options_icicibank.csv'
+    icici_output = 'reference/Pyvollib/Module-2/Data/pyvollib_results_icicibank.csv'
+    process_benchmark_file(icici_input, icici_output)
+
