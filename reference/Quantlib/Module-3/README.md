@@ -628,22 +628,6 @@ results/ (created at runtime)
 └── pnl_scenarios.csv              P&L across spot moves
 ```
 
-## Performance Benchmarks
-
-**Data Collection** (NSE API):
-- TCS option chain: ~2-3 seconds (85 contracts)
-- ICICIBANK option chain: ~2-3 seconds (90 contracts)
-- Total collection: ~5-7 seconds for both symbols
-
-**Analysis Pipeline** (Python):
-- Forward pricing (170 records): ~50ms
-- YTM calculations (170 records): ~80ms
-- Total analysis: ~130ms
-
-**Overall End-to-End**:
-- NSE data fetch + parsing: ~7 seconds
-- Analytics + export: ~300ms
-- **Total**: ~7.3 seconds for complete analysis
 
 ## References
 
