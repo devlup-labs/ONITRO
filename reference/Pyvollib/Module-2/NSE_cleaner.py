@@ -44,19 +44,18 @@ def process_nse_file(input_file, output_file, spot_price, expiry_date_str):
     print(f"Success. Cleaned {len(df_clean)} contracts into {output_file}")
 
 if __name__ == "__main__":
-    os.makedirs('data', exist_ok=True)
-
+    os.makedirs('reference/Pyvollib/Module-2/Data', exist_ok=True)
 
     process_nse_file(
-        input_file='option-chain-ED-TCS-28-Jul-2026.csv',
-        output_file='data/options_tcs.csv',
+        input_file='reference/Pyvollib/Module-2/Data/option-chain-ED-TCS-28-Jul-2026.csv',
+        output_file='reference/Pyvollib/Module-2/Data/options_tcs.csv',
         spot_price=3900.0,
         expiry_date_str='28-Jul-2026'
     )
    
     process_nse_file(
-        input_file='option-chain-ED-ICICIBANK-28-Jul-2026.csv',
-        output_file='data/options_icicibank.csv',
+        input_file='reference/Pyvollib/Module-2/Data/option-chain-ED-ICICIBANK-28-Jul-2026.csv',
+        output_file='reference/Pyvollib/Module-2/Data/options_icicibank.csv',
         spot_price=1200.0,
         expiry_date_str='28-Jul-2026'
-)
+    )
