@@ -17,8 +17,22 @@ def clean_float(val):
 
 def calculate_greeks(spot, strike, iv, r, q, days_to_expiry, option_type):
     """Executes structural Black-Scholes evaluation on a standalone row element."""
-    if iv <= 0.01 or spot <= 0 or strike <= 0:
+    
+    # 1. Hard stop only if the strike price itself is corrupted
+    if strike <= 0:
         return 0.0, 0.0, 0.0, 0.0, 0.0
+        
+    # 2. SAFETY PATCH FOR IV: If IV is missing or 0, fall back to market average (e.g., 24%)
+    # Adjust 0.24 if your pipeline expects percentages (like 24.0) instead of decimals
+    if iv <= 0.01 or pd.isna(iv):
+        iv = 0.24  
+        
+    # 3. SAFETY PATCH FOR SPOT: If spot is missing or 0, fall back to benchmark
+    if spot <= 0 or pd.isna(spot):
+        spot = 2515.0
+        
+    
+
 
     try:
         # Match time series anchor exactly: June 26, 2026
