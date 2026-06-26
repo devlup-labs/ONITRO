@@ -3,6 +3,8 @@
 
 #include <vector>
 
+namespace onitro {
+
 class CorrelationCalculator {
 public:
     // Calculates Pearson correlation coefficient between two assets' returns
@@ -29,5 +31,7 @@ public:
     // Returns a vector of Betas, one for each asset
     static std::vector<double> calculateMultiAssetBetas(const std::vector<std::vector<double>>& multiAssetReturns, const std::vector<double>& benchmarkReturns);
 };
+
+} // namespace onitro
 
 #endif // MODULE_6_CORRELATION_HPP

@@ -1,22 +1,25 @@
 #include "module_6_correlation.hpp"
-#include <cmath>
-#include <numeric>
+#include <ql/math/statistics/sequencestatistics.hpp>
+#include <ql/math/matrix.hpp>
 #include <stdexcept>
+
+namespace onitro {
 
 double CorrelationCalculator::calculateCovariance(const std::vector<double>& returnsA, const std::vector<double>& returnsB) {
     if (returnsA.size() != returnsB.size() || returnsA.empty()) {
         throw std::invalid_argument("Vectors must be of the same non-zero size to calculate covariance.");
     }
     
-    double meanA = std::accumulate(returnsA.begin(), returnsA.end(), 0.0) / returnsA.size();
-    double meanB = std::accumulate(returnsB.begin(), returnsB.end(), 0.0) / returnsB.size();
-    
-    double covSum = 0.0;
+    QuantLib::SequenceStatistics stats(2);
+    std::vector<double> sample(2);
     for (std::size_t i = 0; i < returnsA.size(); ++i) {
-        covSum += (returnsA[i] - meanA) * (returnsB[i] - meanB);
+        sample[0] = returnsA[i];
+        sample[1] = returnsB[i];
+        stats.add(sample);
     }
     
-    return covSum / (returnsA.size() - 1);
+    QuantLib::Matrix cov = stats.covariance();
+    return cov[0][1];
 }
 
 double CorrelationCalculator::calculateCorrelation(const std::vector<double>& returnsA, const std::vector<double>& returnsB) {
@@ -24,25 +27,16 @@ double CorrelationCalculator::calculateCorrelation(const std::vector<double>& re
         throw std::invalid_argument("Vectors must be of the same non-zero size to calculate correlation.");
     }
     
-    double covariance = calculateCovariance(returnsA, returnsB);
-    
-    double meanA = std::accumulate(returnsA.begin(), returnsA.end(), 0.0) / returnsA.size();
-    double meanB = std::accumulate(returnsB.begin(), returnsB.end(), 0.0) / returnsB.size();
-    
-    double varSumA = 0.0;
-    double varSumB = 0.0;
-    
+    QuantLib::SequenceStatistics stats(2);
+    std::vector<double> sample(2);
     for (std::size_t i = 0; i < returnsA.size(); ++i) {
-        varSumA += (returnsA[i] - meanA) * (returnsA[i] - meanA);
-        varSumB += (returnsB[i] - meanB) * (returnsB[i] - meanB);
+        sample[0] = returnsA[i];
+        sample[1] = returnsB[i];
+        stats.add(sample);
     }
     
-    double stdDevA = std::sqrt(varSumA / (returnsA.size() - 1));
-    double stdDevB = std::sqrt(varSumB / (returnsB.size() - 1));
-    
-    if (stdDevA == 0.0 || stdDevB == 0.0) return 0.0;
-    
-    return covariance / (stdDevA * stdDevB);
+    QuantLib::Matrix cor = stats.correlation();
+    return cor[0][1];
 }
 
 double CorrelationCalculator::calculateBeta(const std::vector<double>& assetReturns, const std::vector<double>& benchmarkReturns) {
@@ -50,19 +44,17 @@ double CorrelationCalculator::calculateBeta(const std::vector<double>& assetRetu
         throw std::invalid_argument("Vectors must be of the same non-zero size to calculate Beta.");
     }
 
-    double covariance = calculateCovariance(assetReturns, benchmarkReturns);
-    
-    // Variance of the benchmark
-    double meanB = std::accumulate(benchmarkReturns.begin(), benchmarkReturns.end(), 0.0) / benchmarkReturns.size();
-    double varSumB = 0.0;
-    for (double r : benchmarkReturns) {
-        varSumB += (r - meanB) * (r - meanB);
+    QuantLib::SequenceStatistics stats(2);
+    std::vector<double> sample(2);
+    for (std::size_t i = 0; i < assetReturns.size(); ++i) {
+        sample[0] = assetReturns[i];
+        sample[1] = benchmarkReturns[i];
+        stats.add(sample);
     }
-    double varianceB = varSumB / (benchmarkReturns.size() - 1);
-
-    if (varianceB == 0.0) return 0.0;
     
-    return covariance / varianceB;
+    QuantLib::Matrix cov = stats.covariance();
+    if (cov[1][1] == 0.0) return 0.0;
+    return cov[0][1] / cov[1][1];
 }
 
 std::vector<double> CorrelationCalculator::calculateRollingCorrelation(const std::vector<double>& returnsA, const std::vector<double>& returnsB, int windowSize) {
@@ -108,24 +100,64 @@ std::vector<double> CorrelationCalculator::calculateRollingBeta(const std::vecto
 }
 
 std::vector<std::vector<double>> CorrelationCalculator::calculateCorrelationMatrix(const std::vector<std::vector<double>>& multiAssetReturns) {
+    if (multiAssetReturns.empty()) return {};
     std::size_t numAssets = multiAssetReturns.size();
+    if (numAssets == 0 || multiAssetReturns[0].empty()) return {};
+    std::size_t numPeriods = multiAssetReturns[0].size();
+    
+    QuantLib::SequenceStatistics stats(numAssets);
+    std::vector<double> sample(numAssets);
+    
+    for (std::size_t i = 0; i < numPeriods; ++i) {
+        for (std::size_t j = 0; j < numAssets; ++j) {
+            sample[j] = multiAssetReturns[j][i];
+        }
+        stats.add(sample);
+    }
+    
+    QuantLib::Matrix cor = stats.correlation();
     std::vector<std::vector<double>> corrMatrix(numAssets, std::vector<double>(numAssets, 1.0));
     
     for (std::size_t i = 0; i < numAssets; ++i) {
-        for (std::size_t j = i + 1; j < numAssets; ++j) {
-            double corr = calculateCorrelation(multiAssetReturns[i], multiAssetReturns[j]);
-            corrMatrix[i][j] = corr;
-            corrMatrix[j][i] = corr; // symmetric
+        for (std::size_t j = 0; j < numAssets; ++j) {
+            corrMatrix[i][j] = cor[i][j];
         }
     }
     return corrMatrix;
 }
 
 std::vector<double> CorrelationCalculator::calculateMultiAssetBetas(const std::vector<std::vector<double>>& multiAssetReturns, const std::vector<double>& benchmarkReturns) {
-    std::vector<double> betas;
-    betas.reserve(multiAssetReturns.size());
-    for (const auto& assetReturns : multiAssetReturns) {
-        betas.push_back(calculateBeta(assetReturns, benchmarkReturns));
+    if (multiAssetReturns.empty()) return {};
+    std::size_t numAssets = multiAssetReturns.size();
+    if (numAssets == 0 || multiAssetReturns[0].empty()) return {};
+    std::size_t numPeriods = multiAssetReturns[0].size();
+    
+    if (benchmarkReturns.size() != numPeriods) {
+        throw std::invalid_argument("Benchmark returns size mismatch.");
     }
+    
+    QuantLib::SequenceStatistics stats(numAssets + 1);
+    std::vector<double> sample(numAssets + 1);
+    
+    for (std::size_t i = 0; i < numPeriods; ++i) {
+        for (std::size_t j = 0; j < numAssets; ++j) {
+            sample[j] = multiAssetReturns[j][i];
+        }
+        sample[numAssets] = benchmarkReturns[i];
+        stats.add(sample);
+    }
+    
+    QuantLib::Matrix cov = stats.covariance();
+    std::vector<double> betas(numAssets, 0.0);
+    double benchVar = cov[numAssets][numAssets];
+    
+    if (benchVar != 0.0) {
+        for (std::size_t i = 0; i < numAssets; ++i) {
+            betas[i] = cov[i][numAssets] / benchVar;
+        }
+    }
+    
     return betas;
 }
+
+} // namespace onitro
