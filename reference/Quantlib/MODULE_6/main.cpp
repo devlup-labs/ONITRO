@@ -83,14 +83,14 @@ int main()
 
         // Rolling Correlation
         std::vector<double> rollingCorr =
-            CorrelationCalculator::calculateRollingCorrelation(
+           onitro::CorrelationCalculator::calculateRollingCorrelation(
                 assetReturns,
                 marketReturns,
                 WINDOW);
 
         // Rolling Beta
         std::vector<double> rollingBeta =
-            CorrelationCalculator::calculateRollingBeta(
+            onitro::CorrelationCalculator::calculateRollingBeta(
                 assetReturns,
                 marketReturns,
                 WINDOW);
