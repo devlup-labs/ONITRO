@@ -29,3 +29,13 @@ tests/validation/*.csv
 *.swp
 .DS_Store
 compile_commands.json
+
+# Visual Studio build
+**/build/
+*.obj
+*.pdb
+*.ilk
+*.tlog
+*.lastbuildstate
+*.exe
+*.vcxproj.user
