@@ -1,51 +1,67 @@
+# ============================================================
 # ONITRO - Module 1 Data Loader
-# Loads and cleans NSE equity CSV files
+# Loads and cleans NSE Option Chain CSV files
+# ============================================================
 
 import pandas as pd
 
 
-def load_nse_csv(filepath: str) -> pd.DataFrame:
-   
-    df = pd.read_csv(filepath)
+def load_option_chain_csv(filepath: str) -> pd.DataFrame:
+    """
+    Loads an NSE Option Chain CSV file and returns a clean DataFrame with:
 
-    # Normalize column names — strip whitespace and uppercase
-    df.columns = df.columns.str.strip().str.upper()
+    STRIKE, 
+    C_OI, C_VOLUME, C_IV, C_LTP,       ← Call side
+    P_OI, P_VOLUME, P_IV, P_LTP         ← Put side
+    """
 
-    # Drop LAST PRICE to avoid duplicate Close column
-    if "LAST PRICE" in df.columns:
-        df.drop(columns=["LAST PRICE"], inplace=True)
+    # NSE option chain CSV structure:
+    # Row 0: "CALLS,,PUTS"             ← skip
+    # Row 1: actual column names       ← use as header
+    # Row 2+: data rows
 
-    # Rename NSE column names to standard names
-    rename_map = {
-        "DATE":                  "Date",
-        "OPEN PRICE":            "Open",
-        "HIGH PRICE":            "High",
-        "LOW PRICE":             "Low",
-        "CLOSE PRICE":           "Close",
-        "TOTAL TRADED QUANTITY": "Volume",
-        "TTL TRD QNTY":          "Volume",
-        "TOTTRDQTY":             "Volume",
-    }
-    df.rename(columns=rename_map, inplace=True)
+    df = pd.read_csv(
+        filepath,
+        skiprows=1,   # skip "CALLS,,PUTS" row
+        names=[
+            'C_OI', 'C_CHNG_OI', 'C_VOLUME', 'C_IV', 'C_LTP', 'C_CHNG',
+            'C_BID_QTY', 'C_BID', 'C_ASK', 'C_ASK_QTY',
+            'STRIKE',
+            'P_BID_QTY', 'P_BID', 'P_ASK', 'P_ASK_QTY',
+            'P_CHNG', 'P_LTP', 'P_IV', 'P_VOLUME', 'P_CHNG_OI', 'P_OI',
+            'EXTRA'
+        ]
+    )
 
-    # Parse and sort by date
-    df["Date"] = pd.to_datetime(df["Date"], dayfirst=True)
-    df.sort_values("Date", inplace=True)
-    df.reset_index(drop=True, inplace=True)
+    # Drop the column header row (first row after skip)
+    df = df.iloc[1:].reset_index(drop=True)
 
-    # Keep only needed columns that exist
-    keep = [c for c in ["Date", "Open", "High", "Low", "Close", "Volume"] if c in df.columns]
-    df = df[keep].copy()
+    # Drop extra column
+    df.drop(columns=["EXTRA"], inplace=True, errors="ignore")
 
-    # Clean numeric columns — remove commas
-    for col in ["Open", "High", "Low", "Close", "Volume"]:
+    # Clean STRIKE — remove commas, convert to float
+    df["STRIKE"] = pd.to_numeric(
+        df["STRIKE"].apply(lambda x: str(x).replace(",", "").strip()),
+        errors="coerce"
+    )
+
+    # Clean numeric columns — remove commas, convert - to NaN
+    numeric_cols = [
+        "C_OI", "C_CHNG_OI", "C_VOLUME", "C_IV", "C_LTP",
+        "C_BID", "C_ASK",
+        "P_OI", "P_CHNG_OI", "P_VOLUME", "P_IV", "P_LTP",
+        "P_BID", "P_ASK"
+    ]
+    for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(
-                df[col].apply(lambda x: str(x).replace(",", "").strip()),
+                df[col].apply(lambda x: str(x).replace(",", "").strip()
+                              if str(x) not in ["-", "nan", ""] else None),
                 errors="coerce"
             )
 
-    df.dropna(subset=["Close"], inplace=True)
+    # Drop rows where STRIKE is NaN
+    df.dropna(subset=["STRIKE"], inplace=True)
     df.reset_index(drop=True, inplace=True)
 
     return df
