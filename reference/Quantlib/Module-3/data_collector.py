@@ -19,7 +19,9 @@ The collector:
 import json
 import os
 import re
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -358,7 +360,7 @@ class NSEOptionChainParser:
                         "gamma": float(pe.get("gamma", 0) or 0),
                         "theta": float(pe.get("theta", 0) or 0),
                         "vega": float(pe.get("vega", 0) or 0),
-                        "collected_at": datetime.now().isoformat(timespec="seconds"),
+                        "collected_at": datetime.now().isoformat(timespec="microseconds"),
                     }
                 )
 
@@ -513,13 +515,47 @@ class NSEOptionChainDataCollector:
 
         return spot_price, df
 
-    def save_to_csv(self, data: pd.DataFrame, symbol: str) -> Optional[str]:
+    def _output_filepath(self, symbol: str) -> Path:
+        return Path(self.output_dir) / f"options_{symbol.lower()}.csv"
+
+    def _history_filepath(self, symbol: str) -> Path:
+        return Path(self.output_dir) / f"{symbol.lower()}_history.csv"
+
+    def _load_history_data(self, symbol: str) -> pd.DataFrame:
+        path = self._history_filepath(symbol)
+        if not path.exists():
+            return pd.DataFrame()
+
+        try:
+            df = pd.read_csv(path)
+            print(f"[INFO] Loaded {len(df):,} historical rows for {symbol} from {path}")
+            return df
+        except Exception as exc:
+            print(f"[WARN] Failed to load historical data from {path}: {exc}")
+            return pd.DataFrame()
+
+    @staticmethod
+    def count_valid_rows(data: pd.DataFrame) -> int:
+        if data.empty:
+            return 0
+
+        valid = data[
+            data["option_type"].isin(["CALL", "PUT"]) &
+            (data["strike_price"] > 0) &
+            (data["ltp"] >= 0)
+        ]
+        return len(valid)
+
+    def save_to_csv(
+        self, data: pd.DataFrame, symbol: str, append: bool = False
+    ) -> Optional[str]:
         """
         Save option chain data to CSV file.
 
         Args:
             data: DataFrame to save.
             symbol: Stock symbol (used in filename).
+            append: If True, append rows to the existing CSV file.
 
         Returns:
             File path if successful, None otherwise.
@@ -528,10 +564,135 @@ class NSEOptionChainDataCollector:
             print(f"[INFO] Skipping CSV save for {symbol}; no data available.")
             return None
 
-        filepath = os.path.join(self.output_dir, f"options_{symbol.lower()}.csv")
-        data.to_csv(filepath, index=False)
-        print(f"[SUCCESS] Data saved to {filepath}")
-        return filepath
+        if append:
+            filepath = self._history_filepath(symbol)
+        else:
+            filepath = self._output_filepath(symbol)
+
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        mode = "a" if append else "w"
+        header = not append or not filepath.exists()
+        data.to_csv(filepath, index=False, mode=mode, header=header)
+
+        action = "Appended to" if append else "Saved"
+        print(f"[SUCCESS] {action} data to {filepath}")
+        return str(filepath)
+
+    def collect_until_target_rows(
+        self,
+        symbol: str,
+        target_rows: int = 15000,
+        snapshot_interval_seconds: int = 30,
+        max_consecutive_failures: int = 8,
+    ) -> Optional[str]:
+        """
+        Collect repeated snapshots until the historical dataset reaches the target row count.
+
+        Args:
+            symbol: NSE stock symbol.
+            target_rows: Minimum valid rows required in the historical dataset.
+            snapshot_interval_seconds: Sleep time between snapshots.
+            max_consecutive_failures: Number of consecutive failures before aborting.
+
+        Returns:
+            Path to the historical CSV file, or None if collection failed.
+        """
+        historical = self._load_history_data(symbol)
+        current_valid_rows = self.count_valid_rows(historical)
+        filepath = self._history_filepath(symbol)
+
+        if current_valid_rows >= target_rows:
+            print(
+                f"[INFO] {symbol} already has {current_valid_rows:,} valid rows; no snapshots needed."
+            )
+            return str(filepath)
+
+        print(
+            f"[HISTORY] Starting snapshot collection for {symbol}. "
+            f"Target: {target_rows:,} valid rows. Current: {current_valid_rows:,}."
+        )
+
+        consecutive_failures = 0
+        snapshot_index = 0
+
+        while current_valid_rows < target_rows:
+            snapshot_index += 1
+            print(
+                f"[HISTORY] Snapshot #{snapshot_index}: "
+                f"current {current_valid_rows:,}/{target_rows:,} valid rows."
+            )
+
+            _, df = self.fetch_and_parse_symbol(symbol)
+            if df.empty:
+                consecutive_failures += 1
+                print(
+                    f"[HISTORY] Empty snapshot for {symbol}. "
+                    f"Consecutive failures: {consecutive_failures}/{max_consecutive_failures}."
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    raise RuntimeError(
+                        f"Unable to collect valid snapshots for {symbol} after "
+                        f"{max_consecutive_failures} consecutive attempts."
+                    )
+                time.sleep(snapshot_interval_seconds)
+                continue
+
+            valid_rows = self.count_valid_rows(df)
+            if valid_rows == 0:
+                consecutive_failures += 1
+                print(
+                    f"[HISTORY] Snapshot #{snapshot_index} contained 0 valid rows for {symbol}. "
+                    f"Retrying..."
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    raise RuntimeError(
+                        f"Unable to collect valid rows for {symbol} after "
+                        f"{max_consecutive_failures} consecutive attempts."
+                    )
+                time.sleep(snapshot_interval_seconds)
+                continue
+
+            consecutive_failures = 0
+            self.save_to_csv(df, symbol, append=True)
+            current_valid_rows += valid_rows
+            print(
+                f"[HISTORY] Appended {valid_rows:,} valid rows from snapshot #{snapshot_index} "
+                f"for {symbol}. Total valid rows now {current_valid_rows:,}."
+            )
+            time.sleep(snapshot_interval_seconds)
+
+        print(
+            f"[HISTORY] Completed target collection for {symbol}: "
+            f"{current_valid_rows:,} valid rows saved to {filepath}."
+        )
+        return str(filepath)
+
+    def collect_history_until_target(
+        self,
+        target_rows: int = 15000,
+        snapshot_interval_seconds: int = 10,
+        max_consecutive_failures: int = 8,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Continuously collect snapshots for both symbols until each historical dataset hits a target row count.
+
+        Returns:
+            Tuple of (stable_symbol_path, volatile_symbol_path).
+        """
+        stable_path = self.collect_until_target_rows(
+            self.stable_symbol,
+            target_rows=target_rows,
+            snapshot_interval_seconds=snapshot_interval_seconds,
+            max_consecutive_failures=max_consecutive_failures,
+        )
+        volatile_path = self.collect_until_target_rows(
+            self.volatile_symbol,
+            target_rows=target_rows,
+            snapshot_interval_seconds=snapshot_interval_seconds,
+            max_consecutive_failures=max_consecutive_failures,
+        )
+        return stable_path, volatile_path
 
     def collect_and_save(self) -> Tuple[Optional[str], Optional[str]]:
         """

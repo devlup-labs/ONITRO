@@ -15,7 +15,24 @@ This module implements four core components of fixed income and derivatives anal
 
 ### 1. `data_collector.py` ⭐ PRODUCTION-READY NSE DATA FETCHER
 Fetches live option chain data directly from NSE (National Stock Exchange of India) and bridges it with QuantLib analytical functions.
+### New CLI and Offline Benchmark Support
 
+This module now supports three execution workflows:
+
+1. `live` mode: Fetch live option chain snapshots and save current CSV files.
+2. `--collect-history` in live mode: Collect repeated historical snapshots until 15,000 valid rows are accumulated.
+3. `benchmark` mode: Load historical CSV data and compute forward/futures/bond/YTM metrics offline.
+
+Use the new CLI entrypoint in `main.py`:
+
+```bash
+cd reference/Quantlib/Module-3
+python3 main.py --mode live
+python3 main.py --mode live --collect-history --target-rows 15000
+python3 main.py --mode benchmark --input data/tcs_history.csv --output outputs/tcs_output.csv
+```
+
+The `main.py` pipeline maintains the existing live collector and appends every historical snapshot safely to new history CSV files.
 **Key Classes**:
 - `NSESessionManager`: Secure NSE API sessions with retry logic and rotating User-Agents
 - `NSEOptionChainParser`: Parses JSON and enriches with QuantLib fields

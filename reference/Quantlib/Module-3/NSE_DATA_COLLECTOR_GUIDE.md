@@ -372,6 +372,34 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
     results = [f.result() for f in concurrent.futures.as_completed(futures)]
 ```
 
+## Historical Benchmark Workflow
+
+### Collect historical snapshots
+
+```bash
+cd /home/vaibhav/ONITRO/reference/Quantlib/Module-3
+python3 main.py --mode live --collect-history --target-rows 15000
+```
+
+This creates:
+- `data/tcs_history.csv`
+- `data/icicibank_history.csv`
+
+Each snapshot is appended with no duplicate headers, and every row includes `collected_at` timestamp metadata.
+
+### Run offline benchmark mode
+
+```bash
+python3 main.py --mode benchmark --input data/tcs_history.csv --output outputs/tcs_output.csv
+```
+
+This produces:
+- `outputs/tcs_output.csv`
+- `outputs/icicibank_output.csv`
+- `outputs/benchmark_report.txt`
+
+The offline benchmark mode reads the historical CSV, skips malformed rows with warnings, and writes computed metrics alongside original input columns.
+
 ## Output Examples
 
 ### Summary Statistics Output
