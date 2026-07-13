@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from main import process_benchmark_dataset
+from benchmarks import process_benchmark_dataset
 
 
 class BenchmarkReportingTests(unittest.TestCase):
@@ -17,27 +17,24 @@ class BenchmarkReportingTests(unittest.TestCase):
             pd.DataFrame(
                 [
                     {
-                        "underlying_symbol": "TCS",
-                        "spot_price": 2500.0,
-                        "strike_price": 2600.0,
-                        "expiry_date_str": "2026-07-01",
-                        "option_type": "CALL",
-                        "ltp": 100.0,
-                        "bid": 99.0,
-                        "ask": 101.0,
-                        "volume": 500,
-                        "open_interest": 100,
-                        "iv": 0.2,
-                        "delta": 0.5,
-                        "gamma": 0.01,
-                        "theta": -0.1,
-                        "vega": 0.2,
-                        "risk_free_rate": 0.06,
-                        "dividend_yield": 0.02,
-                        "evaluation_date": "2026-07-01 13:52:41.420657",
-                        "time_to_maturity": 0.25,
-                        "collected_at": "2026-07-01 13:52:41.420657",
-                        "mid_price": 100.0,
+                        "Symbol": "TCS",
+                        "Date": "01-Jan-2025",
+                        "Expiry": "27-Feb-2025",
+                        "Option type": "CE",
+                        "Strike Price": 3400.0,
+                        "Open": 200.0,
+                        "High": 210.0,
+                        "Low": 195.0,
+                        "Close": 205.0,
+                        "LTP": 203.0,
+                        "Settle Price": 205.0,
+                        "No. of contracts": 100,
+                        "Turnover * in  ₹ Lakhs": 50.0,
+                        "Premium Turnover ** in   ₹ Lakhs": 10.0,
+                        "Open Int": 1200,
+                        "Change in OI": 100,
+                        "Underlying Value": 4112.45,
+                        "Implied Volatility (%)": 22.44,
                     }
                 ]
             ).to_csv(input_path, index=False)

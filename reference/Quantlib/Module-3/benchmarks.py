@@ -1,33 +1,19 @@
-"""CLI for live NSE data collection and offline benchmark processing.
+"""CSV-driven benchmark runner for option-chain datasets.
 
 Usage:
-    python main.py --mode live
-    python main.py --mode live --collect-history
-    python main.py --mode benchmark --input data/tcs_history.csv
-    python main.py --mode benchmark --input data/icicibank_history.csv --output outputs/icicibank_output.csv
+    python benchmarks.py --input /path/to/TCS_Options_Combined_IV.csv --output /path/to/output.csv
 """
 
 import argparse
 import math
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-# Ensure local module imports resolve even when the script is run from another directory.
-ROOT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT_DIR))
+from typing import Any, List, Optional, Tuple
 
 import pandas as pd
 
-from data_collector import NSEOptionChainDataCollector
-from csv_loader import load_historical_csv
-
 DEFAULT_OUTPUT_DIR = Path("outputs")
-DEFAULT_HISTORY_DIR = Path("data")
-DEFAULT_HISTORY_TARGET_ROWS = 15000
-DEFAULT_HISTORY_SNAPSHOT_INTERVAL_SECONDS = 30
 
 
 class BenchmarkCalculator:
@@ -138,57 +124,14 @@ class BenchmarkCalculator:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Live NSE collector and offline benchmark runner.")
-    parser.add_argument(
-        "--mode",
-        choices=["live", "benchmark"],
-        required=True,
-        help="Execution mode: live data collection or offline benchmark.",
-    )
-    parser.add_argument(
-        "--input",
-        type=str,
-        help="Historical CSV input path for benchmark mode.",
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        help="Output CSV path for benchmark mode. Default: outputs/<symbol>_output.csv",
-    )
+    parser = argparse.ArgumentParser(description="CSV benchmark runner for option-chain datasets.")
+    parser.add_argument("--input", required=True, type=str, help="CSV input path to benchmark.")
+    parser.add_argument("--output", type=str, help="Output CSV path for benchmark mode. Default: outputs/<stem>_output.csv")
     parser.add_argument(
         "--benchmark-report",
         type=str,
         default=str(DEFAULT_OUTPUT_DIR / "benchmark_report.txt"),
         help="Benchmark report file path.",
-    )
-    parser.add_argument(
-        "--collect-history",
-        action="store_true",
-        help="Collect history snapshots instead of only live data when running live mode.",
-    )
-    parser.add_argument(
-        "--target-rows",
-        type=int,
-        default=DEFAULT_HISTORY_TARGET_ROWS,
-        help="Target number of valid rows for historical data collection.",
-    )
-    parser.add_argument(
-        "--snapshot-interval",
-        type=int,
-        default=DEFAULT_HISTORY_SNAPSHOT_INTERVAL_SECONDS,
-        help="Seconds between live history snapshots.",
-    )
-    parser.add_argument(
-        "--stable-symbol",
-        type=str,
-        default="TCS",
-        help="Stable symbol used by live mode.",
-    )
-    parser.add_argument(
-        "--volatile-symbol",
-        type=str,
-        default="ICICIBANK",
-        help="Volatile symbol used by live mode.",
     )
     return parser.parse_args()
 
@@ -196,10 +139,41 @@ def parse_args() -> argparse.Namespace:
 def _safe_float(value: Any) -> Optional[float]:
     if value is None:
         return None
+    if isinstance(value, str):
+        value = value.strip().replace(",", "")
+        if value in {"", "-", "nan", "NaN", "None"}:
+            return None
     try:
         return float(value)
     except (ValueError, TypeError):
         return None
+
+
+def _derive_time_to_maturity(row: pd.Series) -> float:
+    for key in ("Expiry", "expiry", "expiry_date", "Expiry Date", "expiry_date_str"):
+        expiry_value = row.get(key)
+        if expiry_value is None:
+            continue
+        if isinstance(expiry_value, str) and not expiry_value.strip():
+            continue
+        try:
+            expiry_dt = pd.to_datetime(expiry_value, errors="coerce")
+            if pd.notna(expiry_dt):
+                trade_value = row.get("Date") or row.get("date") or row.get("evaluation_date") or row.get("collected_at")
+                if trade_value is not None and str(trade_value).strip():
+                    trade_dt = pd.to_datetime(trade_value, errors="coerce")
+                    if pd.notna(trade_dt):
+                        delta_days = (expiry_dt - trade_dt).days
+                        if delta_days > 0:
+                            return max(delta_days / 365.0, 1e-6)
+                return max((expiry_dt - pd.Timestamp.today().normalize()).days / 365.0, 1e-6)
+        except Exception:
+            continue
+    return 0.25
+
+
+def create_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def process_benchmark_dataset(
@@ -210,13 +184,14 @@ def process_benchmark_dataset(
     create_directory(output_path.parent)
 
     load_start = time.perf_counter()
-    df, loaded_rows, skipped_rows = load_historical_csv(str(input_path))
+    df = pd.read_csv(input_path)
     load_end = time.perf_counter()
     load_time = load_end - load_start
+    skipped_rows = 0
 
     if df.empty:
         report_lines.append(f"Dataset: {input_path.name}")
-        report_lines.append(f"Rows Processed: 0")
+        report_lines.append("Rows Processed: 0")
         report_lines.append(f"Rows Skipped: {skipped_rows}")
         report_lines.append("CSV Load:")
         report_lines.append(f"{load_time * 1000:.1f} ms")
@@ -243,14 +218,35 @@ def process_benchmark_dataset(
     forward_futures_time = 0.0
     bond_pricing_time = 0.0
     ytm_solver_time = 0.0
-    for idx, row in df.iterrows():
-        spot_price = _safe_float(row.get("spot_price"))
-        time_to_maturity = _safe_float(row.get("time_to_maturity"))
-        risk_free_rate = _safe_float(row.get("risk_free_rate"))
-        dividend_yield = _safe_float(row.get("dividend_yield"))
-        ltp = _safe_float(row.get("ltp"))
 
-        if spot_price is None or time_to_maturity is None or risk_free_rate is None or dividend_yield is None or ltp is None:
+    for _, row in df.iterrows():
+        spot_price = _safe_float(row.get("Underlying Value"))
+        if spot_price is None:
+            spot_price = _safe_float(row.get("spot_price"))
+        if spot_price is None:
+            spot_price = _safe_float(row.get("Close"))
+        if spot_price is None:
+            spot_price = _safe_float(row.get("Open"))
+
+        ltp = _safe_float(row.get("LTP"))
+        if ltp is None:
+            ltp = _safe_float(row.get("ltp"))
+        if ltp is None:
+            ltp = _safe_float(row.get("Close"))
+
+        risk_free_rate = _safe_float(row.get("risk_free_rate"))
+        if risk_free_rate is None:
+            risk_free_rate = 0.06
+
+        dividend_yield = _safe_float(row.get("dividend_yield"))
+        if dividend_yield is None:
+            dividend_yield = 0.02
+
+        time_to_maturity = _safe_float(row.get("time_to_maturity"))
+        if time_to_maturity is None:
+            time_to_maturity = _derive_time_to_maturity(row)
+
+        if spot_price is None or time_to_maturity <= 0:
             skipped_rows += 1
             continue
 
@@ -285,22 +281,26 @@ def process_benchmark_dataset(
             }
         )
         computed_rows.append(row_dict)
+
     compute_end = time.perf_counter()
     compute_time = compute_end - compute_start
 
     if computed_rows:
         out_df = pd.DataFrame(computed_rows)
     else:
-        out_df = pd.DataFrame(columns=list(df.columns) + [
-            "calculated_forward_price",
-            "calculated_futures_price",
-            "forward_discount_premium_pct",
-            "cost_of_carry",
-            "zero_coupon_bond_price",
-            "coupon_bond_price",
-            "implied_bond_market_price",
-            "calculated_ytm",
-        ])
+        out_df = pd.DataFrame(
+            columns=list(df.columns)
+            + [
+                "calculated_forward_price",
+                "calculated_futures_price",
+                "forward_discount_premium_pct",
+                "cost_of_carry",
+                "zero_coupon_bond_price",
+                "coupon_bond_price",
+                "implied_bond_market_price",
+                "calculated_ytm",
+            ]
+        )
 
     write_start = time.perf_counter()
     out_df.to_csv(output_path, index=False)
@@ -336,30 +336,6 @@ def process_benchmark_dataset(
     return processed_rows, skipped_rows, load_time, compute_time, write_time
 
 
-def create_directory(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def run_live_mode(args: argparse.Namespace) -> None:
-    collector = NSEOptionChainDataCollector(
-        stable_symbol=args.stable_symbol,
-        volatile_symbol=args.volatile_symbol,
-        output_dir=str(DEFAULT_HISTORY_DIR),
-    )
-
-    if args.collect_history:
-        print("Starting historical snapshot collection...")
-        collector.collect_history_until_target(
-            target_rows=args.target_rows,
-            snapshot_interval_seconds=args.snapshot_interval,
-        )
-        print("Historical snapshot collection complete.")
-        return
-
-    stable_path, volatile_path = collector.collect_and_save()
-    print(f"Live data collection complete:\n  Stable: {stable_path}\n  Volatile: {volatile_path}")
-
-
 def run_benchmark_mode(args: argparse.Namespace) -> None:
     if not args.input:
         raise ValueError("Benchmark mode requires --input path to historical data.")
@@ -368,23 +344,20 @@ def run_benchmark_mode(args: argparse.Namespace) -> None:
     if not input_path.exists():
         raise FileNotFoundError(f"Input file does not exist: {input_path}")
 
-    output_path = Path(args.output) if args.output else DEFAULT_OUTPUT_DIR / f"{input_path.stem.replace('_history','')}_output.csv"
+    output_path = Path(args.output) if args.output else DEFAULT_OUTPUT_DIR / f"{input_path.stem.replace('_history', '')}_output.csv"
     report_path = Path(args.benchmark_report)
 
     create_directory(output_path.parent)
     create_directory(report_path.parent)
 
     report_lines: List[str] = ["--------------------------------"]
-    print(f"Benchmarking historical dataset: {input_path}")
+    print(f"Benchmarking dataset: {input_path}")
 
-    processed_rows, skipped_rows, load_time, compute_time, write_time = process_benchmark_dataset(
+    process_benchmark_dataset(
         input_path=input_path,
         output_path=output_path,
         report_lines=report_lines,
     )
-
-    total_time = load_time + compute_time + write_time
-    print(f"Benchmark complete. Output written to {output_path}")
 
     report_lines.append(f"Benchmark report saved to: {report_path}")
     report_text = "\n".join(report_lines)
@@ -394,13 +367,7 @@ def run_benchmark_mode(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
-
-    if args.mode == "live":
-        run_live_mode(args)
-    elif args.mode == "benchmark":
-        run_benchmark_mode(args)
-    else:
-        raise ValueError(f"Unsupported mode: {args.mode}")
+    run_benchmark_mode(args)
 
 
 if __name__ == "__main__":
