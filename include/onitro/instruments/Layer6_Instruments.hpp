@@ -102,18 +102,6 @@ struct alignas(64) HigherMomentsState {
 };
 
 // ============================================================================
-// 8. 1D Kalman Filter State (Cache Line Aligned - 64 Bytes)
-// ============================================================================
-struct alignas(64) KalmanState1D {
-    double x_est = 0.0; // Post-estimate state
-    double p_est = 1.0; // Post-estimate error covariance
-    double q     = 1e-4; // Process noise variance (tunable)
-    double r     = 1e-2; // Measurement noise variance (tunable)
-    
-    double _pad[4];      
-};
-
-// ============================================================================
 // Function Declarations (Public API)
 // ============================================================================
 
@@ -156,25 +144,6 @@ StatusCode process_ewmcov_batch_simd(
 
 HigherMomentsState process_higher_moments_batch_simd(
     const double* __restrict__ in_values, 
-    std::size_t batch_size) noexcept;
-
-StatusCode process_parkinson_volatility_batch_simd(
-    const double* __restrict__ in_highs,
-    const double* __restrict__ in_lows,
-    double* __restrict__ out_volatility,
-    std::size_t batch_size) noexcept;
-
-StatusCode process_zscore_batch_simd(
-    const double* __restrict__ in_values,
-    const double* __restrict__ in_means,
-    const double* __restrict__ in_variances,
-    double* __restrict__ out_zscores,
-    std::size_t batch_size) noexcept;
-
-StatusCode process_kalman_1d_batch(
-    KalmanState1D* __restrict__ state,
-    const double* __restrict__ in_measurements,
-    double* __restrict__ out_estimates,
     std::size_t batch_size) noexcept;
 
 // ============================================================================
