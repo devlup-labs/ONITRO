@@ -30,13 +30,18 @@ struct alignas(64) WelfordState {
 
 // ============================================================================
 // 2. Rolling Window State (Inverse Welford) - 64 Bytes
+//    Now includes a ring buffer for safe multi-batch usage.
+//    Caller must allocate ring_buffer of size window_size before first call.
 // ============================================================================
 struct alignas(64) RollingWindowState {
-    double mean  = 0.0;
-    double m2    = 0.0;
-    double count = 0.0;
-    
-    double _pad[5];
+    double      mean        = 0.0;
+    double      m2          = 0.0;
+    double      count       = 0.0;
+    double*     ring_buffer = nullptr;  // caller-allocated, size = window_size
+    std::size_t ring_head   = 0;        // current write position in ring
+    std::size_t ring_cap    = 0;        // = window_size
+
+    double _pad[1]; 
 };
 
 // ============================================================================
@@ -45,8 +50,10 @@ struct alignas(64) RollingWindowState {
 struct alignas(64) EwmaState {
     double current_ewma = 0.0;
     double alpha        = 0.1;
+    bool   initialized  = false;
     
-    double _pad[6];
+    char   _pad_bool[7];  // pad bool to 8 bytes
+    double _pad[5];
 };
 
 // ============================================================================
@@ -84,21 +91,23 @@ struct alignas(64) EwmaBivariateState {
     double var_y  = 0.0;
     double cov_xy = 0.0;
     double alpha  = 0.1; 
-    
-    double _pad[2];      
+    bool   initialized = false;
+
+    char   _pad_bool[7];  // pad bool to 8 bytes
+    double _pad[1];      
 };
 
 // ============================================================================
 // 7. Higher-Order Moments State (Cache Line Aligned - 64 Bytes)
 // ============================================================================
 struct alignas(64) HigherMomentsState {
-    long double mean  = 0.0;
-    long double m2    = 0.0;   
-    long double m3    = 0.0;   
-    long double m4    = 0.0;   
-    long double count = 0.0;
+    double mean  = 0.0;
+    double m2    = 0.0;   
+    double m3    = 0.0;   
+    double m4    = 0.0;   
+    double count = 0.0;
     
-    long double _pad[3];       
+    double _pad[3];       
 };
 
 // ============================================================================
