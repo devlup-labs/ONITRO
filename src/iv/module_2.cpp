@@ -7,7 +7,11 @@
 namespace{
 
     //N(d1) & N(d2) calculation
+
     //Abramovitv-Stegun formula for precise approximation
+
+    //Abramovitv-Stegun formula for prcise approximation
+
     inline double norm_cdf(double x) noexcept{
 
         const double b1 = 0.319381530;
@@ -21,8 +25,14 @@ namespace{
         double a=std::abs(x);
         double t=1.0/(1.0+p*a);
         double m=1.0-c*std::exp(-x*x*0.5)*t*(b1+t*(b2+t*(b3+t*(b4+t*b5))));
-        
+
         return 0.5 + std::copysign(0.5,x)*(2.0*m-1.0);
+
+        double res=(x>=0.0) ? m:1.0-m;
+        res=(x>6.0) ? 1.0:res;
+        res=(x<-6.0) ? 0.0:res;
+        return res;
+
     }
 
     //N'(d1) & N'(d2)
@@ -42,6 +52,7 @@ namespace{
     inline double compute_corrado_miller(double target_price, double S, double K, double T, double r, double q, uint8_t is_call) noexcept{
         double call_price=is_call ? target_price:target_price+S*std::exp(-q*T)-K*std::exp(-r*T);
 
+
         double x=call_price-(S-K)/2.0;
         double y=S-K;
 
@@ -53,6 +64,10 @@ namespace{
             return (bs_vol<0.0001) ? 0.0001:bs_vol;
         }
         return (std::sqrt(2.0*M_PI)/(S+K))*(x+std::sqrt(D));
+
+        double D=std::pow(call_price-(S-K)/2.0,2.0)-(std::pow(S-K,2.0)/M_PI);
+        return (D<0.0) ? 0.5 : (std::sqrt(2.0*M_PI)/(S+K))*(call_price-(S-K)/2.0 +std::sqrt(D));
+
     }
 
     //Helper function for Brent's Method, pricing residual utility f(sigma)=BSM price-market price
@@ -206,6 +221,7 @@ namespace Volatility{
                 is_call_local[i]=batch.is_call[idx];
 
                 if(tgt_local[i]>1e-6 && T_local[i]>1e-6 && S_local[i]>1e-6 && K_local[i]>1e-6 && !is_arbitrage(tgt_local[i], S_local[i], K_local[i], T_local[i], r_local[i], q_local[i], is_call_local[i]))[[likely]]{
+
                     double intrinsic=is_call_local[i] ? std::max(0.0,S_local[i]*std::exp(-q_local[i]*T_local[i])-K_local[i]*std::exp(-r_local[i]*T_local[i]))
                                                       : std::max(0.0,K_local[i]*std::exp(-r_local[i]*T_local[i])-S_local[i]*std::exp(-q_local[i]*T_local[i]));
                     if(tgt_local[i]<=intrinsic+1e-7){
@@ -219,6 +235,12 @@ namespace Volatility{
                         active_mask[i]=1;     
                         fallback_mask[i]=0;
                     }       
+
+                    double cm_vol=compute_corrado_miller(tgt_local[i], S_local[i], K_local[i], T_local[i], r_local[i], q_local[i], is_call_local[i]);
+                    sigma_n[i]=(cm_vol<0.0001) ? 0.0001:cm_vol;
+                    active_mask[i]=1;     
+                    fallback_mask[i]=0;       
+
                 }
                 else{
                     out_ivs[idx]=NAN;
@@ -241,6 +263,7 @@ namespace Volatility{
 
                         const double d1=(std::log(S/K)+(r-q+vol*vol*0.5)*T)/(vol*std::sqrt(T));
                         const double d2=d1-vol*std::sqrt(T);
+
                         const double exp_qT=std::exp(-q*T);
                         const double exp_rT=std::exp(-r*T);
                         const double nd1=norm_cdf(d1);
@@ -253,10 +276,19 @@ namespace Volatility{
                         double f_val=calc-batch.target_prices[idx];
                         
                         if((std::abs(f_val))<std::max(1e-8,epsilon*tgt_local[i])){
+
+                        double calc=is_call ? (S*std::exp(-q*T)*norm_cdf(d1)-K*std::exp(-r*T)*norm_cdf(d2)):
+                                                       (K*std::exp(-r*T)*norm_cdf(-d2)-S*std::exp(-q*T)*norm_cdf(-d1));
+                        double vega=S*std::exp(-q*T)*norm_pdf(d1)*std::sqrt(T);
+                        double f_val=calc-batch.target_prices[idx];
+                        
+                        if((std::abs(f_val))<epsilon){
+
                             out_ivs[idx]=vol;
                             active_mask[i]=0;
                             fallback_mask[i]=0;
                         }
+
                         else{
                             double vomma=vega*d1*d2/vol;
                             double halley_step=vega-(0.5*f_val*(vomma/(vega+1e-12)));
@@ -271,6 +303,18 @@ namespace Volatility{
                             active_mask[i]=0;
                             fallback_mask[i]=1;
                             }
+
+                        else if(vega>1e-8){
+                            double step=f_val/vega;
+                            double next_sigma=sigma_n[i]-step;
+                            if(next_sigma<0.0001) next_sigma=0.0001;
+                            if(next_sigma>10.0) next_sigma=10.0;
+                            sigma_n[i]=next_sigma;
+                        }
+                        else{
+                            active_mask[i]=0;
+                            fallback_mask[i]=1;
+
                         }
                     }
                     active_count+=active_mask[i];
@@ -287,6 +331,7 @@ namespace Volatility{
             }
 
             // Pipeline Stage 3: Direct execution of exact Brent solver for slow-converging/volatile profiles
+
             uint32_t fallback_indices[1024];
             int fallback_count=0;
 
@@ -303,6 +348,16 @@ namespace Volatility{
                 out_ivs[idx]=implied_vol_brent(tgt_local[i], S_local[i], K_local[i],
                                                T_local[i], r_local[i], q_local[i], is_call_local[i]); 
             }
+
+            #pragma omp simd
+            for(std::size_t i=0; i<limit; ++i){
+                if(fallback_mask[i]){
+                    std::size_t idx=chunk+i;
+                    out_ivs[idx]=implied_vol_brent(tgt_local[i], S_local[i], K_local[i],
+                        T_local[i], r_local[i], q_local[i], is_call_local[i]); 
+                }
+            }
+
         }
     }    
 
@@ -348,6 +403,7 @@ namespace Volatility{
                 is_call_local[i]=batch.is_call[idx];
 
                 if(tgt_local[i]>1e-6 && T_local[i]>1e-6 && S_local[i]>1e-6 && K_local[i]>1e-6 && !is_arbitrage(tgt_local[i], S_local[i], K_local[i], T_local[i], r_local[i], q_local[i], is_call_local[i]))[[likely]]{
+
                     double intrinsic=is_call_local[i] ? std::max(0.0,S_local[i]*std::exp(-q_local[i]*T_local[i])-K_local[i]*std::exp(-r_local[i]*T_local[i]))
                                                       : std::max(0.0,K_local[i]*std::exp(-r_local[i]*T_local[i])-S_local[i]*std::exp(-q_local[i]*T_local[i]));
                     if(tgt_local[i]<=intrinsic+1e-7){
@@ -366,6 +422,12 @@ namespace Volatility{
                         active_mask[i]=1;      
                         fallback_mask[i]=0;
                     }      
+
+                    double cm_vol=compute_corrado_miller(tgt_local[i], S_local[i], K_local[i], T_local[i], r_local[i], q_local[i], is_call_local[i]);
+                    sigma_n[i]=(cm_vol<0.0001) ? 0.0001:cm_vol;
+                    active_mask[i]=1;      
+                    fallback_mask[i]=0;      
+
                 }
                 else{
                     if(output_mask & WANT_IV) out_ivs[idx]=NAN;
@@ -394,6 +456,7 @@ namespace Volatility{
 
                         const double d1=(std::log(S/K)+(r-q+vol*vol*0.5)*T)/(vol*std::sqrt(T));
                         const double d2=d1-vol*std::sqrt(T);
+
                         const double exp_qT=std::exp(-q*T);
                         const double exp_rT=std::exp(-r*T);
                         const double nd1=norm_cdf(d1);
@@ -406,6 +469,14 @@ namespace Volatility{
                         double f_val=calc-tgt_local[i];
 
                         if(std::abs(f_val)<std::max(1e-8,epsilon*tgt_local[i])){
+
+                        double calc=is_call?(S*std::exp(-q*T)*norm_cdf(d1)-K*std::exp(-r*T)*norm_cdf(d2)):
+                                            (K*std::exp(-r*T)*norm_cdf(-d2)-S*std::exp(-q*T)*norm_cdf(-d1));
+                        double vega=S*std::exp(-q*T)*norm_pdf(d1)*std::sqrt(T);
+                        double f_val=calc-tgt_local[i];
+
+                        if(std::abs(f_val)<epsilon){
+
                             if(output_mask & WANT_IV){
                                 out_ivs[idx]=vol;
                             }
@@ -415,22 +486,39 @@ namespace Volatility{
                             }
                             if(output_mask & WANT_GAMMA){
                                 out_gammas[idx]=(exp_qT*npd1)/(S*vol*std::sqrt(T));
+
+                                out_deltas[idx]=is_call ? (std::exp(-q*T)*norm_cdf(d1))
+                                                        : (std::exp(-q*T)*(norm_cdf(d1)-1.0));
+                            }
+                            if(output_mask & WANT_GAMMA){
+                                out_gammas[idx]=(std::exp(-q*T)*norm_pdf(d1))/(S*vol*std::sqrt(T));
+
                             }
                             if(output_mask & WANT_VEGA){
                                 out_vegas[idx]=vega;
                             }
                             if(output_mask & WANT_THETA){
+
                                 double theta_c=-(S*exp_qT*npd1*vol)/(2.0*std::sqrt(T))
                                                -r*K*exp_rT*nd2+q*S*exp_qT*nd1;
                                 out_thetas[idx]=is_call ? theta_c:theta_c+r*K*exp_rT-q*S*exp_qT;               
                             }
                             if(output_mask & WANT_RHO){
                                 out_rhos[idx]=is_call ? K*T*exp_rT*nd2:-K*T*exp_rT*(1.0-nd2);
+
+                                double theta_c=-(S*std::exp(-q*T)*norm_pdf(d1)*vol)/(2.0*std::sqrt(T))
+                                               -r*K*std::exp(-r*T)*norm_cdf(d2)+q*S*std::exp(-q*T)*norm_cdf(d1);
+                                out_thetas[idx]=is_call ? theta_c:theta_c+r*K*std::exp(-r*T)-q*S*std::exp(-q*T);               
+                            }
+                            if(output_mask & WANT_RHO){
+                                out_rhos[idx]=is_call ? K*T*std::exp(-r*T)*norm_cdf(d2):-K*T*std::exp(-r*T)*norm_cdf(-d2);
+
                             }
 
                             active_mask[i]=0;
                             fallback_mask[i]=0;
                         }
+
                         else{
                             double vomma=vega*d1*d2/vol;
                             double halley_step=vega-(0.5*f_val*(vomma/(vega+1e-12)));
@@ -445,6 +533,18 @@ namespace Volatility{
                             active_mask[i]=0;
                             fallback_mask[i]=1;
                             }
+
+                        else if(vega>1e-8){
+                            double step=f_val/vega;
+                            double next_sigma=sigma_n[i]-step;
+                            if(next_sigma<0.0001) next_sigma=0.0001;
+                            if(next_sigma>10.0) next_sigma=10.0;
+                            sigma_n[i]=next_sigma;
+                        }
+                        else{
+                            active_mask[i]=0;
+                            fallback_mask[i]=1;
+
                         }
                     }
                     active_count+=active_mask[i];
@@ -460,6 +560,7 @@ namespace Volatility{
             }
 
             // Pipeline Stage 3: Brent solver evaluation pass for items requiring backup
+
             uint32_t fallback_indices[1024];
             int fallback_count=0;
 
@@ -519,8 +620,57 @@ namespace Volatility{
             }
         }
                               
+
+            #pragma omp simd
+            for(std::size_t i=0; i<limit; ++i){
+                if(fallback_mask[i]){
+                    std::size_t idx=chunk+i;
+                    const double S=S_local[i], T=T_local[i], K=K_local[i];
+                    const double r=r_local[i], q=q_local[i];
+                    const uint8_t is_call=is_call_local[i];
+
+                    double brent_vol=implied_vol_brent(tgt_local[i],S,K,T,r,q,is_call);
+
+                    if(output_mask & WANT_IV){
+                        out_ivs[idx]=brent_vol;
+                    }
+
+                    if(brent_vol!=brent_vol){
+                        if(output_mask & WANT_DELTA) out_deltas[idx]=NAN;
+                        if(output_mask & WANT_GAMMA) out_gammas[idx]=NAN;
+                        if(output_mask & WANT_VEGA) out_vegas[idx]=NAN;
+                        if(output_mask & WANT_THETA) out_thetas[idx]=NAN;
+                        if(output_mask & WANT_RHO) out_rhos[idx]=NAN;
+                    }
+
+                    else if(output_mask & (WANT_DELTA | WANT_GAMMA | WANT_VEGA | WANT_THETA | WANT_RHO)){
+                        const double d1=(std::log(S/K)+(r-q+0.5*brent_vol*brent_vol)*T)/(brent_vol*std::sqrt(T));
+                        const double d2=d1-brent_vol*std::sqrt(T);
+
+                        if(output_mask & WANT_DELTA){
+                            out_deltas[idx]=is_call ? std::exp(-q*T)*norm_cdf(d1):std::exp(-q*T)*(norm_cdf(d1)-1.0);
+                        }
+                        if(output_mask & WANT_VEGA){
+                            out_vegas[idx]=S*std::exp(-q*T)*norm_pdf(d1)*std::sqrt(T);
+                        }
+                        if(output_mask & WANT_GAMMA){
+                            out_gammas[idx]=(std::exp(-q*T)*norm_pdf(d1))/(S*brent_vol*std::sqrt(T));
+                        }
+                        if(output_mask & WANT_THETA){
+                            double theta_c=-(S*std::exp(-q*T)*norm_pdf(d1)*brent_vol)/(2.0*std::sqrt(T))
+                                            -r*K*std::exp(-r*T)*norm_cdf(d2)+q*S*std::exp(-q*T)*norm_cdf(d1);
+                            out_thetas[idx]=is_call ? theta_c:theta_c+r*K*std::exp(-r*T)-q*S*std::exp(-q*T);
+                        }
+                        if(output_mask & WANT_RHO){
+                            out_rhos[idx]=is_call ? K*T*std::exp(-r*T)*norm_cdf(d2):-K*T*std::exp(-r*T)*norm_cdf(-d2);
+                        }
+                    }
+                }
+            }
+        }                      
+
     }
                             
 }
 }
-}
+}}}}
