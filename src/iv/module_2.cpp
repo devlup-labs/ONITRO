@@ -1,10 +1,12 @@
-#include "module_2.hpp"
+#include "onitro/instruments/module_2.hpp"
+#include "onitro/simd.hpp"
 #include <cmath>
 #include <algorithm>
-#include <immintrin.h>
 //#include <omp.h> //commented out all multithreading commands for now, can revisit later
 
 namespace{
+
+constexpr double pi = 3.14159265358979323846;
 
     //N(d1) & N(d2) calculation
     //Abramovitv-Stegun formula for prcise approximation
@@ -30,7 +32,7 @@ namespace{
 
     //N'(d1) & N'(d2)
     inline double norm_pdf(double x) noexcept{
-        return (1.0/std::sqrt(2.0*M_PI))*std::exp(-x*x*0.5);
+        return (1.0/std::sqrt(2.0*pi))*std::exp(-x*x*0.5);
     }
 
     //Validating arbitrage bounds
@@ -40,12 +42,29 @@ namespace{
         }
         return target_price<std::max(0.0,K*std::exp(-r*T)-S*std::exp(-q*T));
     }
+    //changed from pow to sqrt ans also changed corado millers fallback
+    inline double compute_corrado_miller(double target_price, double S, double K,
+                                        double T, double r, double q,
+                                        uint8_t is_call) noexcept {
 
-    //Dynamic initial guess via Corrado-Miller formula, with fallback for D<0, to optimize Newton Raphson
-    inline double compute_corrado_miller(double target_price, double S, double K, double T, double r, double q, uint8_t is_call) noexcept{
-        double call_price=is_call ? target_price:target_price+S*std::exp(-q*T)-K*std::exp(-r*T);
-        double D=std::pow(call_price-(S-K)/2.0,2.0)-(std::pow(S-K,2.0)/M_PI);
-        return (D<0.0) ? 0.5 : (std::sqrt(2.0*M_PI)/(S+K))*(call_price-(S-K)/2.0 +std::sqrt(D));
+        double call_price = is_call ? target_price
+                                    : target_price + S*std::exp(-q*T)
+                                    - K*std::exp(-r*T);
+
+        double x = call_price - (S - K) / 2.0;
+        double y = S - K;
+
+        double D = x * x - (y * y) / pi;
+
+        if (D < 0.0) {
+            // Brenner-Subramanyam (1988) approximation as fallback seed
+            // sigma ~= sqrt(2*pi/T) * (C/S), valid near S ~= K
+            double bs_vol = std::sqrt(2.0 * pi / T) * (call_price / S);
+            return (bs_vol < 0.0001) ? 0.0001 : bs_vol;
+        }
+
+        return (std::sqrt(2.0 * pi) / (S + K))
+                * (x + std::sqrt(D));
     }
 
     //Helper function for Brent's Method, pricing residual utility f(sigma)=BSM price-market price
@@ -166,26 +185,24 @@ namespace Volatility{
                            std::size_t N,
                            double epsilon,
                            std::size_t max_iter,
-                           double* __restrict__ out_ivs) noexcept{
+                           double* ONITRO_RESTRICT out_ivs) noexcept{
         
         //#pragma omp parallel for if(N>10000) schedule(dynamic,1024)// Multithreading command
 
         // Block based data chunking for cache architecture
-        for(std::size_t chunk=0; chunk<N; chunk+=1024){
-            
-            const std::size_t limit=std::min(std::size_t(1024),N-chunk);
+        ONITRO::simd::for_each_block(N, [&](std::size_t chunk, std::size_t limit) noexcept {
 
             // 64-Byte Alignment enforces flawless AVX-512/AVX2 cache line loads
-            alignas(64) double sigma_n[1024];
-            alignas(64) uint8_t active_mask[1024];
-            alignas(64) uint8_t fallback_mask[1024];
+            ONITRO::simd::buffer<double> sigma_n;
+            ONITRO::simd::buffer<uint8_t> active_mask;
+            ONITRO::simd::buffer<uint8_t> fallback_mask;
 
-            alignas(64) double S_local[1024], K_local[1024], T_local[1024];
-            alignas(64) double r_local[1024], q_local[1024], tgt_local[1024];
-            alignas(64) uint8_t is_call_local[1024];
+            ONITRO::simd::buffer<double> S_local, K_local, T_local;
+            ONITRO::simd::buffer<double> r_local, q_local, tgt_local;
+            ONITRO::simd::buffer<uint8_t> is_call_local;
 
             // Pipeline Stage 1: Local memory ingestion, boundary profiling, and initial seed estimation
-            #pragma omp simd
+            ONITRO_SIMD_LOOP
             for(std::size_t i=0; i<limit; ++i){
                 
                 std::size_t idx=chunk+i;
@@ -215,7 +232,7 @@ namespace Volatility{
             for(std::size_t iter=0; iter<max_iter; ++iter){
                 int active_count=0;
                
-                #pragma omp simd reduction(+:active_count)
+                ONITRO_SIMD_LOOP
                 for(std::size_t i=0; i<limit; ++i){
                     if(active_mask[i]){
                         std::size_t idx=chunk+i;
@@ -253,7 +270,7 @@ namespace Volatility{
             }
 
             // Flag remaining elements failing Newton-Raphson limits for fallback resolution
-            #pragma omp simd
+            ONITRO_SIMD_LOOP
             for(std::size_t i=0; i<limit; ++i){
                 if (active_mask[i]){
                     fallback_mask[i]=1;
@@ -261,7 +278,7 @@ namespace Volatility{
             }
 
             // Pipeline Stage 3: Direct execution of exact Brent solver for slow-converging/volatile profiles
-            #pragma omp simd
+            ONITRO_SIMD_LOOP
             for(std::size_t i=0; i<limit; ++i){
                 if(fallback_mask[i]){
                     std::size_t idx=chunk+i;
@@ -269,7 +286,7 @@ namespace Volatility{
                         T_local[i], r_local[i], q_local[i], is_call_local[i]); 
                 }
             }
-        }
+        });
     }    
 
     // Complete Execution Pipeline: Synchronous estimation of Implied Volatilities and all structural Greeks.
@@ -279,28 +296,26 @@ namespace Volatility{
                                   double epsilon,
                                   std::size_t max_iter,
                                   uint8_t output_mask,
-                                  double* __restrict__ out_ivs,
-                                  double* __restrict__ out_deltas,
-                                  double* __restrict__ out_gammas,
-                                  double* __restrict__ out_vegas,
-                                  double* __restrict__ out_thetas,
-                                  double* __restrict__ out_rhos)noexcept{
+                                  double* ONITRO_RESTRICT out_ivs,
+                                  double* ONITRO_RESTRICT out_deltas,
+                                  double* ONITRO_RESTRICT out_gammas,
+                                  double* ONITRO_RESTRICT out_vegas,
+                                  double* ONITRO_RESTRICT out_thetas,
+                                  double* ONITRO_RESTRICT out_rhos)noexcept{
         
         //#pragma omp parallel for if(N>10000) schedule(dynamic,1024)// multithreading command
-        for(std::size_t chunk=0; chunk<N; chunk+=1024){
-            
-            const std::size_t limit=std::min(std::size_t(1024),N-chunk);
+        ONITRO::simd::for_each_block(N, [&](std::size_t chunk, std::size_t limit) noexcept {
 
-            alignas(64) double sigma_n[1024];
-            alignas(64) uint8_t active_mask[1024];
-            alignas(64) uint8_t fallback_mask[1024];
+            ONITRO::simd::buffer<double> sigma_n;
+            ONITRO::simd::buffer<uint8_t> active_mask;
+            ONITRO::simd::buffer<uint8_t> fallback_mask;
 
-            alignas(64) double S_local[1024], K_local[1024], T_local[1024];
-            alignas(64) double r_local[1024], q_local[1024], tgt_local[1024];
-            alignas(64) uint8_t is_call_local[1024];
+            ONITRO::simd::buffer<double> S_local, K_local, T_local;
+            ONITRO::simd::buffer<double> r_local, q_local, tgt_local;
+            ONITRO::simd::buffer<uint8_t> is_call_local;
 
             // Pipeline Stage 1: Data caching, sanity profiling, and boundary tracking
-            #pragma omp simd
+            ONITRO_SIMD_LOOP
             for(std::size_t i=0; i<limit; ++i){
                 
                 std::size_t idx=chunk+i;
@@ -335,7 +350,7 @@ namespace Volatility{
             for(std::size_t iter=0; iter<max_iter; ++iter){
                 int active_count=0;
 
-                #pragma omp simd reduction(+:active_count)
+                ONITRO_SIMD_LOOP
                 for(std::size_t i=0; i<limit; ++i){
                     if(active_mask[i]){
                         std::size_t idx=chunk+i;
@@ -394,7 +409,7 @@ namespace Volatility{
                 if(active_count==0) break;
             }  
  
-            #pragma omp simd
+            ONITRO_SIMD_LOOP
             for(std::size_t i=0; i<limit; ++i){
                 if (active_mask[i]){
                     fallback_mask[i]=1;
@@ -402,7 +417,7 @@ namespace Volatility{
             }
 
             // Pipeline Stage 3: Brent solver evaluation pass for items requiring backup
-            #pragma omp simd
+            ONITRO_SIMD_LOOP
             for(std::size_t i=0; i<limit; ++i){
                 if(fallback_mask[i]){
                     std::size_t idx=chunk+i;
@@ -448,7 +463,7 @@ namespace Volatility{
                     }
                 }
             }
-        }                      
+        });
     }
                             
 }

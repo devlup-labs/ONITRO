@@ -40,6 +40,17 @@ functions **within** the module's files (not as separate directories):
 about the math without SIMD noise. The split means vectorization is a *rewrite
 of one layer*, never a redesign of the module.
 
+## 3. Centralized SIMD policy
+
+Modules include `onitro/simd.hpp` instead of defining their own SIMD block
+size, alignment, or loop policy. `ONITRO::simd::for_each_block` owns the
+cache-sized block traversal and `ONITRO::simd::buffer` owns aligned scratch
+storage. `ONITRO_SIMD_LOOP` is the compiler-specific loop hint; numerical
+kernels remain in their owning module.
+
+This centralizes the execution policy without coupling pricing, IV, risk, or
+statistics code to each other's numerical implementation.
+
 ## Supporting rules
 
 - **Branch-free hot paths.** Replace `if` with arithmetic/masking in

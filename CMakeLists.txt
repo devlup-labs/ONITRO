@@ -36,7 +36,7 @@ set(ONITRO_SOURCES
     # src/pricing/...   src/greeks/...
     #
     # --- Module 2: implied vol (Parrva) ---
-    # src/iv/...
+    src/iv/module_2.cpp
     #
     # --- Module 3: instruments (Arnav) ---
     # src/instruments/...
@@ -60,6 +60,7 @@ if(ONITRO_SOURCES)
         $<INSTALL_INTERFACE:include>)
     target_compile_features(onitro PUBLIC cxx_std_20)
     if(ONITRO_ENABLE_AVX2)
+        target_compile_definitions(onitro PRIVATE ONITRO_ENABLE_AVX2=1)
         if(MSVC)
             target_compile_options(onitro PRIVATE /arch:AVX2)
         else()
