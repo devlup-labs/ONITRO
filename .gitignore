@@ -29,3 +29,4 @@ tests/validation/*.csv
 *.swp
 .DS_Store
 compile_commands.json
+/data/
